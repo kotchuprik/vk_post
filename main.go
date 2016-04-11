@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"sync"
 	"fmt"
-	"time"
 )
 
 var token = "388df3d7442cf9fd6c5cc9b43b9a015a247db04dc62f07c7aedc4d2fe9771067434bc5b1ebb503e57911e"
@@ -194,7 +193,7 @@ func postWall(id int, message string, attachments string, date string)  {
 
 	vkontakteUserId := "-72507356"
 
-	client := &http.Client{}
+	client1 := &http.Client{}
 
 	data := url.Values{}
 	data.Set("owner_id", vkontakteUserId)
@@ -204,7 +203,7 @@ func postWall(id int, message string, attachments string, date string)  {
 
 	log.Print("tut3")
 
-	res2, err := client.Post("https://api.vk.com/method/wall.post?access_token="+token,"application/x-www-form-urlencoded",bytes.NewBufferString(data.Encode()))
+	res2, err := client1.Post("https://api.vk.com/method/wall.post?access_token="+token,"application/x-www-form-urlencoded",bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		log.Fatalf("postWall error: %v", err)
 	}
@@ -290,16 +289,29 @@ func main() {
 
 	//uplServ("1","./1.jpg","now")
 
+	jsonResponses := make(chan string)
+
+	joobs := getDb().Items
+
 	var wg sync.WaitGroup
 
-	wg.Add(len(getDb().Items))
+	wg.Add(len(joobs))
 
-	for _, joob := range getDb().Items {
+	log.Print(len(joobs))
+
+	for _, joob := range joobs {
 		go func(joob getdbs) {
-			time.Sleep(1 * time.Second)
 			defer wg.Done()
 			uplServ(joob.Id,joob.Message,joob.Image,joob.Date)
+			jsonResponses <- string(joob.Message)
 		}(joob)
 	}
+
+	go func() {
+		for response := range jsonResponses {
+			fmt.Println(response)
+		}
+	}()
+
 	wg.Wait()
 }
