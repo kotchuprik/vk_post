@@ -13,12 +13,14 @@ import (
 	"database/sql"
 	_ "github.com/go-sql-driver/mysql"
 	"net/url"
-	"sync"
 	"fmt"
+	"time"
+	"math/rand"
 )
 
 var token = "388df3d7442cf9fd6c5cc9b43b9a015a247db04dc62f07c7aedc4d2fe9771067434bc5b1ebb503e57911e"
 
+var group_id = 72507356
 
 type getdbs struct {
 	Id      int
@@ -53,27 +55,31 @@ func uplServ(id int,message string, img string, date string){
 
 	var getWallUploadServers *getWallUploadServer
 
-	sR := "https://api.vk.com/method/photos.getWallUploadServer?group_id=72507356&access_token="+token
+	r_uplServ := "https://api.vk.com/method/photos.getWallUploadServer?group_id=72507356&access_token="+token
 
 	client := &http.Client{}
 
-	r, _ := client.Get(sR)
-	b, _ := ioutil.ReadAll(r.Body)
-
-	err := json.Unmarshal([]byte(b), &getWallUploadServers)
+	res_uplServ, _ := client.Get(r_uplServ)
+	b_uplServ, err := ioutil.ReadAll(res_uplServ.Body)
 	if err != nil {
-		log.Fatalf("uplServ error: %v", err)
-	}else {
-		fh, err := os.Open(img)
+		log.Fatalf("b_uplServ error: %v", err)
+	} else {
+		err = json.Unmarshal([]byte(b_uplServ), &getWallUploadServers)
 		if err != nil {
-			log.Print("error opening file")
+			log.Fatalf("uplServ error: %v", err)
+		}else {
+			defer res_uplServ.Body.Close()
+
+			fh, err := os.Open(img)
+			if err != nil {
+				log.Print("error opening file")
+			}
+			defer fh.Close()
+
+			s,p,h,r := postImg(getWallUploadServers.Response.UploadURL,fh)
+			ids := saveImg(s,p,h,r)
+			postWall(id,message,ids,date)
 		}
-
-		s,p,h,r := postImg(getWallUploadServers.Response.UploadURL,fh)
-
-		ids := saveImg(s,p,h,r)
-
-		postWall(id,message,ids,date)
 	}
 }
 
@@ -86,6 +92,7 @@ func postImg(url string, img io.Reader) (server int, photo, hash string, err err
 	}
 
 	var b bytes.Buffer
+
 	w := multipart.NewWriter(&b)
 	fw, err := w.CreateFormFile("photo", "photo.jpg")
 	if err != nil {
@@ -96,33 +103,34 @@ func postImg(url string, img io.Reader) (server int, photo, hash string, err err
 	}
 	w.Close()
 
-	req0, err := http.NewRequest("POST", url, &b)
+	req_postImg, err := http.NewRequest("POST", url, &b)
 	if err != nil {
 		log.Fatalf("NewRequest error: %v",err)
+	}else {
+
+		req_postImg.Header.Set("Content-Type", w.FormDataContentType())
+
+		client_postImg := &http.Client{}
+
+		res_postImg, err_postImg := client_postImg.Do(req_postImg)
+		if err_postImg != nil {
+			log.Fatalf("Do error: %v", err_postImg)
+		}else {
+			defer res_postImg.Body.Close()
+
+			uplRes := UploadResponse{}
+
+			dec := json.NewDecoder(res_postImg.Body)
+			err = dec.Decode(&uplRes)
+			if err != nil {
+				log.Fatalf("Decode error: %v", err)
+			} else {
+				server = uplRes.Server
+				photo = uplRes.Photo
+				hash = uplRes.Hash
+			}
+		}
 	}
-
-	req0.Header.Set("Content-Type", w.FormDataContentType())
-
-	client0 := &http.Client{}
-
-	res0, err_postImg := client0.Do(req0)
-	if err_postImg != nil {
-		log.Fatalf("Do error: %v", err_postImg)
-	}
-	uplRes := UploadResponse{}
-
-	dec := json.NewDecoder(res0.Body)
-	err = dec.Decode(&uplRes)
-	if err != nil {
-		log.Fatalf("Decode error: %v", err)
-	}
-	defer res0.Body.Close()
-
-	log.Print(uplRes.Server)
-
-	server = uplRes.Server
-	photo = uplRes.Photo
-	hash = uplRes.Hash
 	return
 }
 
@@ -155,7 +163,7 @@ func saveImg(server int, photo, hash string, err error) (id string){
 		      } `json:"error"`
 	}
 
-	uplRes1 := saveWallPhoto{}
+	upl_saveImg := saveWallPhoto{}
 
 	uplErr  := Error{}
 
@@ -163,78 +171,72 @@ func saveImg(server int, photo, hash string, err error) (id string){
 	data.Set("server", strconv.Itoa(server))
 	data.Add("photo", photo)
 	data.Add("hash", hash)
-	data.Add("group_id", "72507356")
+	data.Add("group_id", strconv.Itoa(group_id))
 
-	url := "https://api.vk.com/method/photos.saveWallPhoto?access_token="+token
+	url_saveImg := "https://api.vk.com/method/photos.saveWallPhoto?access_token="+token
 
-	clientp := &http.Client{}
+	client_saveImg := &http.Client{}
 
-	res1, _ := clientp.Post(url,"application/x-www-form-urlencoded",bytes.NewBufferString(data.Encode()))
+	time.Sleep(2*time.Second)
 
-	dec := json.NewDecoder(res1.Body)
-	err = dec.Decode(&uplRes1)
+	res_saveImg, err := client_saveImg.Post(url_saveImg,"application/x-www-form-urlencoded",bytes.NewBufferString(data.Encode()))
 	if err != nil {
-		err = dec.Decode(&uplErr)
-		if err != nil{
-			log.Fatalf("Decode uplErr error: %v",err)
+		log.Fatal(err)
+	}else {
+		defer res_saveImg.Body.Close()
+
+		dec := json.NewDecoder(res_saveImg.Body)
+		err = dec.Decode(&upl_saveImg)
+		if err != nil {
+			err = dec.Decode(&uplErr)
+			if err != nil{
+				log.Fatalf("Decode uplErr error: %v",err)
+			}else {
+				log.Fatalf("Decode1 error: %v",uplErr.Error.ErrorMsg)
+			}
+		} else {
+			id = upl_saveImg.Response[0].ID
 		}
-		log.Fatalf("Decode1 error: %v",uplErr.Error.ErrorMsg)
 	}
-
-	log.Print(uplRes1.Response[0].ID)
-
-	id = uplRes1.Response[0].ID
-
-	defer res1.Body.Close()
-	return id
+	return
 }
 
 func postWall(id int, message string, attachments string, date string)  {
 
-	vkontakteUserId := "-72507356"
-
-	client1 := &http.Client{}
+	client_postWall := &http.Client{}
 
 	data := url.Values{}
-	data.Set("owner_id", vkontakteUserId)
+	data.Set("owner_id", strconv.Itoa(group_id*-1))
 	data.Add("message", message)
 	data.Add("attachments", attachments)
 	data.Add("publish_date",date)
 
-	log.Print("tut3")
-
-	res2, err := client1.Post("https://api.vk.com/method/wall.post?access_token="+token,"application/x-www-form-urlencoded",bytes.NewBufferString(data.Encode()))
+	res_postWall, err := client_postWall.Post("https://api.vk.com/method/wall.post?access_token="+token,"application/x-www-form-urlencoded",bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		log.Fatalf("postWall error: %v", err)
+	} else {
+		defer res_postWall.Body.Close()
+
+		uplpostWall := postWalls{}
+
+		dec := json.NewDecoder(res_postWall.Body)
+
+		err = dec.Decode(&uplpostWall)
+		if err != nil {
+			log.Fatalf("Decode postWall error: %v", err)
+		}else {
+			log.Print(uplpostWall.Response.PostID)
+		}
+
+		//dbPost(id,uplpostWall.Response.PostID)
 	}
-
-	uplpostWall := postWalls{}
-
-	dec := json.NewDecoder(res2.Body)
-
-	err = dec.Decode(&uplpostWall)
-	if err != nil {
-		log.Fatalf("Decode postWall error: %v", err)
-	}
-
-	defer res2.Body.Close()
-
-	//dbPost(id,uplpostWall.Response.PostID)
-
-	log.Print("tut7")
 }
-
 func dbPost(id int,post_id int) {
-
-	log.Print("tut4")
-
 	db, err := sql.Open("mysql", "root:Vbirfufvvb@(127.0.0.1:3306)/vk")
 	if err != nil {
 		panic(err.Error())
 	}
 	defer db.Close()
-
-	log.Print("tut5")
 
 	stmt, err := db.Prepare("UPDATE queue SET post_id = ?, post=1 WHERE id = ?;")
 
@@ -244,13 +246,10 @@ func dbPost(id int,post_id int) {
 	affect, err := res.RowsAffected()
 	panic(err.Error())
 
-	log.Print("tut6")
-
 	fmt.Println(affect)
 }
 
 func getDb() boxs {
-
 	items := []getdbs{}
 	box := boxs{items}
 
@@ -286,32 +285,15 @@ func getDb() boxs {
 }
 
 func main() {
-
-	//uplServ("1","./1.jpg","now")
-
-	jsonResponses := make(chan string)
-
 	joobs := getDb().Items
-
-	var wg sync.WaitGroup
-
-	wg.Add(len(joobs))
 
 	log.Print(len(joobs))
 
 	for _, joob := range joobs {
-		go func(joob getdbs) {
-			defer wg.Done()
-			uplServ(joob.Id,joob.Message,joob.Image,joob.Date)
-			jsonResponses <- string(joob.Message)
-		}(joob)
+		time.Sleep(2*time.Second)
+		uplServ(joob.Id,joob.Message,joob.Image,joob.Date)
 	}
-
-	go func() {
-		for response := range jsonResponses {
-			fmt.Println(response)
-		}
-	}()
-
-	wg.Wait()
 }
+
+
+
